@@ -48,7 +48,17 @@ export function usePlayer() {
     });
 
     audio.addEventListener('durationchange', () => {
-      setState(s => ({ ...s, duration: audio.duration }));
+      // Only update if we get a valid finite duration
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        setState(s => ({ ...s, duration: audio.duration }));
+      }
+    });
+
+    audio.addEventListener('loadedmetadata', () => {
+      // Also check on loadedmetadata
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        setState(s => ({ ...s, duration: audio.duration }));
+      }
     });
 
     audio.addEventListener('ended', () => {
@@ -58,7 +68,8 @@ export function usePlayer() {
           audio.src = `/api/stream/${next.id}`;
           audio.play();
           const newHistory = s.currentTrack ? [...s.history, s.currentTrack] : s.history;
-          return { ...s, currentTrack: next, queue: rest, history: newHistory, isPlaying: true };
+          const duration = next.duration && next.duration > 0 ? next.duration : 0;
+          return { ...s, currentTrack: next, queue: rest, history: newHistory, isPlaying: true, duration, currentTime: 0 };
         }
         return { ...s, isPlaying: false };
       });
@@ -84,7 +95,9 @@ export function usePlayer() {
     audioRef.current.play();
     setState(s => {
       const newHistory = s.currentTrack ? [...s.history, s.currentTrack] : s.history;
-      return { ...s, currentTrack: track, history: newHistory, isPlaying: true };
+      // Use track's duration from metadata as initial value (fallback for chunked streams)
+      const duration = track.duration && track.duration > 0 ? track.duration : 0;
+      return { ...s, currentTrack: track, history: newHistory, isPlaying: true, duration, currentTime: 0 };
     });
   }, []);
 
@@ -105,7 +118,7 @@ export function usePlayer() {
   }, [state.isPlaying, pause, resume]);
 
   const seek = useCallback((time: number) => {
-    if (audioRef.current) {
+    if (audioRef.current && isFinite(time) && time >= 0) {
       audioRef.current.currentTime = time;
     }
   }, []);
@@ -127,8 +140,9 @@ export function usePlayer() {
     if (!audioRef.current) return;
     audioRef.current.src = `/api/stream/${first.id}`;
     audioRef.current.play();
-    // Clear history when starting a new album
-    setState(s => ({ ...s, currentTrack: first, queue: rest, history: [], isPlaying: true }));
+    // Clear history when starting a new album, use track duration as fallback
+    const duration = first.duration && first.duration > 0 ? first.duration : 0;
+    setState(s => ({ ...s, currentTrack: first, queue: rest, history: [], isPlaying: true, duration, currentTime: 0 }));
   }, []);
 
   const playNext = useCallback(() => {
@@ -140,7 +154,8 @@ export function usePlayer() {
           audioRef.current.play();
         }
         const newHistory = s.currentTrack ? [...s.history, s.currentTrack] : s.history;
-        return { ...s, currentTrack: next, queue: rest, history: newHistory, isPlaying: true };
+        const duration = next.duration && next.duration > 0 ? next.duration : 0;
+        return { ...s, currentTrack: next, queue: rest, history: newHistory, isPlaying: true, duration, currentTime: 0 };
       }
       return s;
     });
@@ -151,7 +166,7 @@ export function usePlayer() {
       // If we're more than 3 seconds into a song, restart it instead
       if (audioRef.current && audioRef.current.currentTime > 3) {
         audioRef.current.currentTime = 0;
-        return s;
+        return { ...s, currentTime: 0 };
       }
 
       if (s.history.length > 0) {
@@ -163,13 +178,14 @@ export function usePlayer() {
           audioRef.current.src = `/api/stream/${prev.id}`;
           audioRef.current.play();
         }
-        return { ...s, currentTrack: prev, queue: newQueue, history: newHistory, isPlaying: true };
+        const duration = prev.duration && prev.duration > 0 ? prev.duration : 0;
+        return { ...s, currentTrack: prev, queue: newQueue, history: newHistory, isPlaying: true, duration, currentTime: 0 };
       }
       // No history - just restart current track
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
       }
-      return s;
+      return { ...s, currentTime: 0 };
     });
   }, []);
 
