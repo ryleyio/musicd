@@ -46,10 +46,12 @@ export function registerApiRoutes(app: FastifyInstance, db: MusicDatabase) {
     if (!cover) {
       return reply.status(404).send({ error: 'Cover not found' });
     }
+    // Convert Uint8Array to Buffer for proper response
+    const data = Buffer.from(cover.data);
     return reply
       .header('Content-Type', cover.mimeType)
       .header('Cache-Control', 'public, max-age=31536000')
-      .send(cover.data);
+      .send(data);
   });
 
   // Search

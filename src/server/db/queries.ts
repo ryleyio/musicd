@@ -1,5 +1,6 @@
-import type Database from 'better-sqlite3';
+import type { Database } from 'sql.js';
 import { createHash } from 'crypto';
+import { saveDatabase } from './schema.js';
 
 export interface Track {
   id: number;
@@ -23,7 +24,7 @@ export interface Track {
 export interface Cover {
   id: number;
   hash: string;
-  data: Buffer;
+  data: Uint8Array;
   mimeType: string;
 }
 
@@ -46,25 +47,60 @@ export interface TrackInput {
   size: number;
 }
 
+// Helper to convert sql.js results to array of objects
+function queryAll<T>(db: Database, sql: string, params: any[] = []): T[] {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const results: T[] = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject();
+    results.push(row as T);
+  }
+  stmt.free();
+  return results;
+}
+
+function queryOne<T>(db: Database, sql: string, params: any[] = []): T | undefined {
+  const results = queryAll<T>(db, sql, params);
+  return results[0];
+}
+
+function run(db: Database, sql: string, params: any[] = []): { lastId: number; changes: number } {
+  db.run(sql, params);
+  const lastId = db.exec('SELECT last_insert_rowid() as id')[0]?.values[0]?.[0] as number || 0;
+  const changes = db.exec('SELECT changes() as c')[0]?.values[0]?.[0] as number || 0;
+  return { lastId, changes };
+}
+
 export class MusicDatabase {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database) {}
 
   getTrackFingerprint(path: string): { mtime: number; size: number } | null {
-    const stmt = this.db.prepare('SELECT mtime, size FROM tracks WHERE path = ?');
-    return stmt.get(path) as { mtime: number; size: number } | null;
+    const result = queryOne<{ mtime: number; size: number }>(
+      this.db,
+      'SELECT mtime, size FROM tracks WHERE path = ?',
+      [path]
+    );
+    return result || null;
   }
 
   upsertCover(data: Buffer, mimeType: string): number {
     const hash = createHash('sha256').update(data).digest('hex');
 
-    const existing = this.db.prepare('SELECT id FROM covers WHERE hash = ?').get(hash) as { id: number } | undefined;
+    const existing = queryOne<{ id: number }>(
+      this.db,
+      'SELECT id FROM covers WHERE hash = ?',
+      [hash]
+    );
     if (existing) return existing.id;
 
-    const result = this.db.prepare(
-      'INSERT INTO covers (hash, data, mimeType) VALUES (?, ?, ?)'
-    ).run(hash, data, mimeType);
+    const { lastId } = run(
+      this.db,
+      'INSERT INTO covers (hash, data, mimeType) VALUES (?, ?, ?)',
+      [hash, data, mimeType]
+    );
 
-    return result.lastInsertRowid as number;
+    return lastId;
   }
 
   upsertTrack(input: TrackInput): void {
@@ -73,7 +109,7 @@ export class MusicDatabase {
       coverId = this.upsertCover(input.coverData, input.coverMimeType);
     }
 
-    const stmt = this.db.prepare(`
+    run(this.db, `
       INSERT INTO tracks (path, title, artist, album, albumArtist, trackNumber, discNumber, year, duration, genres, fileType, codec, coverId, mtime, size)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
@@ -91,9 +127,7 @@ export class MusicDatabase {
         coverId = excluded.coverId,
         mtime = excluded.mtime,
         size = excluded.size
-    `);
-
-    stmt.run(
+    `, [
       input.path,
       input.title ?? null,
       input.artist ?? null,
@@ -109,35 +143,39 @@ export class MusicDatabase {
       coverId,
       input.mtime,
       input.size
-    );
+    ]);
+
+    saveDatabase();
   }
 
   getAllPaths(): string[] {
-    const rows = this.db.prepare('SELECT path FROM tracks').all() as { path: string }[];
+    const rows = queryAll<{ path: string }>(this.db, 'SELECT path FROM tracks');
     return rows.map(r => r.path);
   }
 
   deleteTrack(path: string): void {
-    this.db.prepare('DELETE FROM tracks WHERE path = ?').run(path);
+    run(this.db, 'DELETE FROM tracks WHERE path = ?', [path]);
+    saveDatabase();
   }
 
   cleanupOrphanedCovers(): void {
-    this.db.prepare(`
+    run(this.db, `
       DELETE FROM covers WHERE id NOT IN (SELECT DISTINCT coverId FROM tracks WHERE coverId IS NOT NULL)
-    `).run();
+    `);
+    saveDatabase();
   }
 
   getArtists(): { name: string; trackCount: number }[] {
-    return this.db.prepare(`
+    return queryAll(this.db, `
       SELECT COALESCE(albumArtist, artist, 'Unknown Artist') as name, COUNT(*) as trackCount
       FROM tracks
       GROUP BY name
       ORDER BY name COLLATE NOCASE
-    `).all() as { name: string; trackCount: number }[];
+    `);
   }
 
   getAlbums(): { album: string; artist: string; coverId: number | null; trackCount: number; year: number | null }[] {
-    return this.db.prepare(`
+    return queryAll(this.db, `
       SELECT
         COALESCE(album, 'Unknown Album') as album,
         COALESCE(albumArtist, artist, 'Unknown Artist') as artist,
@@ -147,11 +185,11 @@ export class MusicDatabase {
       FROM tracks
       GROUP BY COALESCE(album, 'Unknown Album'), COALESCE(albumArtist, artist, 'Unknown Artist')
       ORDER BY album COLLATE NOCASE
-    `).all() as { album: string; artist: string; coverId: number | null; trackCount: number; year: number | null }[];
+    `);
   }
 
   getAlbumsByArtist(artist: string): { album: string; artist: string; coverId: number | null; trackCount: number; year: number | null }[] {
-    return this.db.prepare(`
+    return queryAll(this.db, `
       SELECT
         COALESCE(album, 'Unknown Album') as album,
         COALESCE(albumArtist, artist, 'Unknown Artist') as artist,
@@ -162,46 +200,46 @@ export class MusicDatabase {
       WHERE COALESCE(albumArtist, artist, 'Unknown Artist') = ?
       GROUP BY COALESCE(album, 'Unknown Album')
       ORDER BY year DESC, album COLLATE NOCASE
-    `).all(artist) as { album: string; artist: string; coverId: number | null; trackCount: number; year: number | null }[];
+    `, [artist]);
   }
 
   getTracks(): Track[] {
-    return this.db.prepare(`
+    return queryAll(this.db, `
       SELECT * FROM tracks ORDER BY
         COALESCE(albumArtist, artist, 'Unknown Artist') COLLATE NOCASE,
         COALESCE(album, 'Unknown Album') COLLATE NOCASE,
         COALESCE(discNumber, 1),
         COALESCE(trackNumber, 999)
-    `).all() as Track[];
+    `);
   }
 
   getTracksByAlbum(album: string, artist: string): Track[] {
-    return this.db.prepare(`
+    return queryAll(this.db, `
       SELECT * FROM tracks
       WHERE COALESCE(album, 'Unknown Album') = ?
         AND COALESCE(albumArtist, artist, 'Unknown Artist') = ?
       ORDER BY COALESCE(discNumber, 1), COALESCE(trackNumber, 999)
-    `).all(album, artist) as Track[];
+    `, [album, artist]);
   }
 
   getTrack(id: number): Track | undefined {
-    return this.db.prepare('SELECT * FROM tracks WHERE id = ?').get(id) as Track | undefined;
+    return queryOne(this.db, 'SELECT * FROM tracks WHERE id = ?', [id]);
   }
 
   getCover(id: number): Cover | undefined {
-    return this.db.prepare('SELECT * FROM covers WHERE id = ?').get(id) as Cover | undefined;
+    return queryOne(this.db, 'SELECT * FROM covers WHERE id = ?', [id]);
   }
 
   search(query: string): { tracks: Track[]; albums: { album: string; artist: string; coverId: number | null }[]; artists: string[] } {
     const pattern = `%${query}%`;
 
-    const tracks = this.db.prepare(`
+    const tracks = queryAll<Track>(this.db, `
       SELECT * FROM tracks
       WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? OR albumArtist LIKE ?
       LIMIT 50
-    `).all(pattern, pattern, pattern, pattern) as Track[];
+    `, [pattern, pattern, pattern, pattern]);
 
-    const albums = this.db.prepare(`
+    const albums = queryAll<{ album: string; artist: string; coverId: number | null }>(this.db, `
       SELECT DISTINCT
         COALESCE(album, 'Unknown Album') as album,
         COALESCE(albumArtist, artist, 'Unknown Artist') as artist,
@@ -210,23 +248,23 @@ export class MusicDatabase {
       WHERE album LIKE ? OR albumArtist LIKE ?
       GROUP BY album, artist
       LIMIT 20
-    `).all(pattern, pattern) as { album: string; artist: string; coverId: number | null }[];
+    `, [pattern, pattern]);
 
-    const artistRows = this.db.prepare(`
+    const artistRows = queryAll<{ name: string }>(this.db, `
       SELECT DISTINCT COALESCE(albumArtist, artist, 'Unknown Artist') as name
       FROM tracks
       WHERE artist LIKE ? OR albumArtist LIKE ?
       LIMIT 20
-    `).all(pattern, pattern) as { name: string }[];
+    `, [pattern, pattern]);
     const artists = artistRows.map(r => r.name);
 
     return { tracks, albums, artists };
   }
 
   getStats(): { trackCount: number; artistCount: number; albumCount: number } {
-    const trackCount = (this.db.prepare('SELECT COUNT(*) as count FROM tracks').get() as { count: number }).count;
-    const artistCount = (this.db.prepare('SELECT COUNT(DISTINCT COALESCE(albumArtist, artist)) as count FROM tracks').get() as { count: number }).count;
-    const albumCount = (this.db.prepare('SELECT COUNT(DISTINCT album) as count FROM tracks').get() as { count: number }).count;
+    const trackCount = queryOne<{ count: number }>(this.db, 'SELECT COUNT(*) as count FROM tracks')?.count || 0;
+    const artistCount = queryOne<{ count: number }>(this.db, 'SELECT COUNT(DISTINCT COALESCE(albumArtist, artist)) as count FROM tracks')?.count || 0;
+    const albumCount = queryOne<{ count: number }>(this.db, 'SELECT COUNT(DISTINCT album) as count FROM tracks')?.count || 0;
     return { trackCount, artistCount, albumCount };
   }
 }

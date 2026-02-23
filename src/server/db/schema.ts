@@ -1,25 +1,38 @@
-import Database from 'better-sqlite3';
-import { existsSync, mkdirSync } from 'fs';
+import initSqlJs, { Database } from 'sql.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 
-export function initDatabase(dbPath: string): Database.Database {
-  const dir = dirname(dbPath);
+let db: Database | null = null;
+let dbPath: string = '';
+
+export async function initDatabase(path: string): Promise<Database> {
+  const dir = dirname(path);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
 
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  dbPath = path;
+  const SQL = await initSqlJs();
 
-  db.exec(`
+  if (existsSync(path)) {
+    const fileBuffer = readFileSync(path);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.run('PRAGMA foreign_keys = ON');
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS covers (
       id INTEGER PRIMARY KEY,
       hash TEXT UNIQUE NOT NULL,
       data BLOB NOT NULL,
       mimeType TEXT NOT NULL
-    );
+    )
+  `);
 
+  db.run(`
     CREATE TABLE IF NOT EXISTS tracks (
       id INTEGER PRIMARY KEY,
       path TEXT UNIQUE NOT NULL,
@@ -38,13 +51,26 @@ export function initDatabase(dbPath: string): Database.Database {
       mtime INTEGER NOT NULL,
       size INTEGER NOT NULL,
       FOREIGN KEY (coverId) REFERENCES covers(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
-    CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
-    CREATE INDEX IF NOT EXISTS idx_tracks_albumArtist ON tracks(albumArtist);
-    CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title);
+    )
   `);
 
+  db.run('CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_tracks_albumArtist ON tracks(albumArtist)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title)');
+
+  saveDatabase();
   return db;
+}
+
+export function getDatabase(): Database {
+  if (!db) throw new Error('Database not initialized');
+  return db;
+}
+
+export function saveDatabase(): void {
+  if (!db || !dbPath) return;
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  writeFileSync(dbPath, buffer);
 }

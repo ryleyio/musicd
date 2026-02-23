@@ -22,7 +22,7 @@ export interface ServerOptions {
 export async function startServer(options: ServerOptions) {
   const { dbPath, port, host = '0.0.0.0', musicPath } = options;
 
-  const rawDb = initDatabase(dbPath);
+  const rawDb = await initDatabase(dbPath);
   const db = new MusicDatabase(rawDb);
 
   // Scan if music path provided and database is empty

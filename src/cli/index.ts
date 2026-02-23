@@ -30,7 +30,7 @@ program
       process.exit(1);
     }
 
-    const rawDb = initDatabase(options.db);
+    const rawDb = await initDatabase(options.db);
     const db = new MusicDatabase(rawDb);
     await scanDirectory(resolvedPath, db, { verbose: options.verbose });
   });
