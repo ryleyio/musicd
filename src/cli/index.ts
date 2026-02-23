@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { initDatabase } from '../server/db/schema.js';
 import { MusicDatabase } from '../server/db/queries.js';
@@ -24,7 +24,7 @@ program
   .option('-d, --db <path>', 'Database path', DEFAULT_DB_PATH)
   .option('-v, --verbose', 'Verbose output')
   .action(async (musicPath: string, options: { db: string; verbose?: boolean }) => {
-    const resolvedPath = join(process.cwd(), musicPath);
+    const resolvedPath = resolve(musicPath);
     if (!existsSync(resolvedPath)) {
       console.error(`Error: Directory not found: ${resolvedPath}`);
       process.exit(1);
@@ -46,7 +46,7 @@ program
 
     let musicPath: string | undefined;
     if (options.music) {
-      musicPath = join(process.cwd(), options.music);
+      musicPath = resolve(options.music);
       if (!existsSync(musicPath)) {
         console.error(`Error: Music directory not found: ${musicPath}`);
         process.exit(1);
@@ -70,7 +70,7 @@ program
 
     let resolvedMusicPath: string | undefined;
     if (musicPath) {
-      resolvedMusicPath = join(process.cwd(), musicPath);
+      resolvedMusicPath = resolve(musicPath);
       if (!existsSync(resolvedMusicPath)) {
         console.error(`Error: Directory not found: ${resolvedMusicPath}`);
         process.exit(1);
