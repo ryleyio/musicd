@@ -47,19 +47,8 @@ export function usePlayer() {
       setState(s => ({ ...s, currentTime: audio.currentTime }));
     });
 
-    audio.addEventListener('durationchange', () => {
-      // Only update if we get a valid finite duration
-      if (isFinite(audio.duration) && audio.duration > 0) {
-        setState(s => ({ ...s, duration: audio.duration }));
-      }
-    });
-
-    audio.addEventListener('loadedmetadata', () => {
-      // Also check on loadedmetadata
-      if (isFinite(audio.duration) && audio.duration > 0) {
-        setState(s => ({ ...s, duration: audio.duration }));
-      }
-    });
+    // We use track.duration from database metadata instead of audio element
+    // because chunked streaming doesn't report duration correctly
 
     audio.addEventListener('ended', () => {
       setState(s => {
