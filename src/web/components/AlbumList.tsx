@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface Album {
   album: string;
@@ -13,7 +13,58 @@ interface AlbumListProps {
   onSelect: (album: Album) => void;
 }
 
+// Helper to get the best cover URL for an album
+function getAlbumCoverUrl(album: Album): string | null {
+  if (album.coverId) {
+    return `/api/cover/${album.coverId}`;
+  }
+  // Try the album-cover endpoint which checks for fetched covers
+  return `/api/album-cover?artist=${encodeURIComponent(album.artist)}&album=${encodeURIComponent(album.album)}`;
+}
+
 export default function AlbumList({ albums, onSelect }: AlbumListProps) {
+  const [fetchingCovers, setFetchingCovers] = useState<Set<string>>(new Set());
+  const [failedCovers, setFailedCovers] = useState<Set<string>>(new Set());
+  const [fetchedCovers, setFetchedCovers] = useState<Set<string>>(new Set());
+
+  const handleFetchCover = async (e: React.MouseEvent, album: Album) => {
+    e.stopPropagation();
+    const key = `${album.artist}:${album.album}`;
+
+    setFetchingCovers(prev => new Set(prev).add(key));
+
+    try {
+      const response = await fetch('/api/album-cover/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artist: album.artist, album: album.album })
+      });
+
+      if (response.ok) {
+        setFetchedCovers(prev => new Set(prev).add(key));
+        setFailedCovers(prev => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      } else {
+        setFailedCovers(prev => new Set(prev).add(key));
+      }
+    } catch {
+      setFailedCovers(prev => new Set(prev).add(key));
+    } finally {
+      setFetchingCovers(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const handleImageError = (key: string) => {
+    setFailedCovers(prev => new Set(prev).add(key));
+  };
+
   return (
     <>
       <style>{`
@@ -110,6 +161,31 @@ export default function AlbumList({ albums, onSelect }: AlbumListProps) {
           font-size: 12px;
           margin-top: 4px;
         }
+        .fetch-cover-btn {
+          position: absolute;
+          bottom: 8px;
+          left: 8px;
+          padding: 6px 10px;
+          background: rgba(0,0,0,0.7);
+          border: 1px solid #666;
+          border-radius: 4px;
+          color: #fff;
+          font-size: 11px;
+          cursor: pointer;
+          opacity: 0;
+          transition: opacity 0.2s, background 0.2s;
+        }
+        .album-card:hover .fetch-cover-btn {
+          opacity: 1;
+        }
+        .fetch-cover-btn:hover {
+          background: rgba(29, 185, 84, 0.8);
+          border-color: #1db954;
+        }
+        .fetch-cover-btn.loading {
+          opacity: 1;
+          cursor: wait;
+        }
 
         /* ===== MOBILE STYLES ===== */
         @media (max-width: 768px) {
@@ -150,7 +226,15 @@ export default function AlbumList({ albums, onSelect }: AlbumListProps) {
       `}</style>
       <div className="album-grid">
         {albums.map((album) => {
-          const key = `${album.album}:${album.artist}`;
+          const key = `${album.artist}:${album.album}`;
+          const isFetching = fetchingCovers.has(key);
+          const hasFailed = failedCovers.has(key);
+          const hasFetched = fetchedCovers.has(key);
+
+          // Determine cover URL
+          const coverUrl = getAlbumCoverUrl(album);
+          const showImage = coverUrl && !hasFailed;
+          const showFetchButton = !album.coverId && !hasFetched;
 
           return (
             <div
@@ -159,12 +243,26 @@ export default function AlbumList({ albums, onSelect }: AlbumListProps) {
               onClick={() => onSelect(album)}
             >
               <div className="album-cover-wrapper">
-                {album.coverId ? (
-                  <img src={`/api/cover/${album.coverId}`} alt="" className="album-cover-img" />
+                {showImage ? (
+                  <img
+                    src={hasFetched ? `${coverUrl}&t=${Date.now()}` : coverUrl}
+                    alt=""
+                    className="album-cover-img"
+                    onError={() => handleImageError(key)}
+                  />
                 ) : (
                   <div className="album-cover">&#128191;</div>
                 )}
                 <div className="album-play-overlay">▶</div>
+                {showFetchButton && hasFailed && (
+                  <button
+                    className={`fetch-cover-btn ${isFetching ? 'loading' : ''}`}
+                    onClick={(e) => handleFetchCover(e, album)}
+                    disabled={isFetching}
+                  >
+                    {isFetching ? 'Fetching...' : 'Fetch Cover'}
+                  </button>
+                )}
               </div>
               <div className="album-title">{album.album}</div>
               <div className="album-artist">{album.artist}</div>

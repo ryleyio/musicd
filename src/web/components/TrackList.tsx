@@ -9,6 +9,17 @@ interface TrackListProps {
   isPlaying?: boolean;
 }
 
+// Helper to get cover URL for a track, falling back to album cover
+function getTrackCoverUrl(track: Track): string | null {
+  if (track.coverId) {
+    return `/api/cover/${track.coverId}`;
+  }
+  // Fall back to album cover endpoint
+  const artist = track.albumArtist || track.artist || 'Unknown Artist';
+  const album = track.album || 'Unknown Album';
+  return `/api/album-cover?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`;
+}
+
 function formatDuration(seconds: number | null): string {
   if (!seconds) return '--:--';
   const mins = Math.floor(seconds / 60);
@@ -52,6 +63,11 @@ function NowPlayingIndicator({ isPlaying }: { isPlaying: boolean }) {
 export default function TrackList({ tracks, onPlay, onAddToQueue, currentTrack, isPlaying = false }: TrackListProps) {
   const [hovered, setHovered] = useState<number | null>(null);
   const [queuedId, setQueuedId] = useState<number | null>(null);
+  const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
+
+  const handleImageError = (trackId: number) => {
+    setFailedImages(prev => new Set(prev).add(trackId));
+  };
 
   const handleAddToQueue = (e: React.MouseEvent, track: Track) => {
     e.stopPropagation();
@@ -307,8 +323,13 @@ export default function TrackList({ tracks, onPlay, onAddToQueue, currentTrack, 
               </span>
 
               <div className="track-cover">
-                {track.coverId ? (
-                  <img src={`/api/cover/${track.coverId}`} alt="" className="track-cover-img" />
+                {!failedImages.has(track.id) ? (
+                  <img
+                    src={getTrackCoverUrl(track) || ''}
+                    alt=""
+                    className="track-cover-img"
+                    onError={() => handleImageError(track.id)}
+                  />
                 ) : (
                   <span>&#9835;</span>
                 )}

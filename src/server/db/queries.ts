@@ -28,6 +28,16 @@ export interface Cover {
   mimeType: string;
 }
 
+export interface AlbumCover {
+  id: number;
+  artist: string;
+  album: string;
+  data: Uint8Array;
+  mimeType: string;
+  source: string;
+  fetchedAt: number;
+}
+
 export interface TrackInput {
   path: string;
   title?: string;
@@ -266,5 +276,68 @@ export class MusicDatabase {
     const artistCount = queryOne<{ count: number }>(this.db, 'SELECT COUNT(DISTINCT COALESCE(albumArtist, artist)) as count FROM tracks')?.count || 0;
     const albumCount = queryOne<{ count: number }>(this.db, 'SELECT COUNT(DISTINCT album) as count FROM tracks')?.count || 0;
     return { trackCount, artistCount, albumCount };
+  }
+
+  // Album cover methods for externally fetched covers
+  getAlbumCover(artist: string, album: string): AlbumCover | undefined {
+    return queryOne<AlbumCover>(
+      this.db,
+      'SELECT * FROM album_covers WHERE artist = ? AND album = ?',
+      [artist, album]
+    );
+  }
+
+  upsertAlbumCover(artist: string, album: string, data: Buffer, mimeType: string, source: string): number {
+    const fetchedAt = Date.now();
+
+    run(this.db, `
+      INSERT INTO album_covers (artist, album, data, mimeType, source, fetchedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(artist, album) DO UPDATE SET
+        data = excluded.data,
+        mimeType = excluded.mimeType,
+        source = excluded.source,
+        fetchedAt = excluded.fetchedAt
+    `, [artist, album, data, mimeType, source, fetchedAt]);
+
+    saveDatabase();
+
+    const result = queryOne<{ id: number }>(
+      this.db,
+      'SELECT id FROM album_covers WHERE artist = ? AND album = ?',
+      [artist, album]
+    );
+    return result?.id || 0;
+  }
+
+  getAlbumsMissingCovers(): { album: string; artist: string; trackCount: number }[] {
+    return queryAll(this.db, `
+      SELECT
+        COALESCE(t.album, 'Unknown Album') as album,
+        COALESCE(t.albumArtist, t.artist, 'Unknown Artist') as artist,
+        COUNT(*) as trackCount
+      FROM tracks t
+      WHERE t.coverId IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM album_covers ac
+          WHERE ac.artist = COALESCE(t.albumArtist, t.artist, 'Unknown Artist')
+            AND ac.album = COALESCE(t.album, 'Unknown Album')
+        )
+      GROUP BY COALESCE(t.album, 'Unknown Album'), COALESCE(t.albumArtist, t.artist, 'Unknown Artist')
+      ORDER BY album COLLATE NOCASE
+    `);
+  }
+
+  // Check if an album has any embedded cover (from tracks)
+  getAlbumEmbeddedCoverId(artist: string, album: string): number | null {
+    const result = queryOne<{ coverId: number | null }>(
+      this.db,
+      `SELECT MAX(coverId) as coverId FROM tracks
+       WHERE COALESCE(album, 'Unknown Album') = ?
+         AND COALESCE(albumArtist, artist, 'Unknown Artist') = ?
+         AND coverId IS NOT NULL`,
+      [album, artist]
+    );
+    return result?.coverId ?? null;
   }
 }

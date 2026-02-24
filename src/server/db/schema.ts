@@ -59,6 +59,22 @@ export async function initDatabase(path: string): Promise<Database> {
   db.run('CREATE INDEX IF NOT EXISTS idx_tracks_albumArtist ON tracks(albumArtist)');
   db.run('CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title)');
 
+  // Album covers table for externally fetched cover art
+  db.run(`
+    CREATE TABLE IF NOT EXISTS album_covers (
+      id INTEGER PRIMARY KEY,
+      artist TEXT NOT NULL,
+      album TEXT NOT NULL,
+      data BLOB NOT NULL,
+      mimeType TEXT NOT NULL,
+      source TEXT NOT NULL,
+      fetchedAt INTEGER NOT NULL,
+      UNIQUE(artist, album)
+    )
+  `);
+
+  db.run('CREATE INDEX IF NOT EXISTS idx_album_covers_artist_album ON album_covers(artist, album)');
+
   saveDatabase();
   return db;
 }
