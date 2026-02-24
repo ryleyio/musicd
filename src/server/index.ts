@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
+import fastifyWebsocket from '@fastify/websocket';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -8,6 +9,7 @@ import { initDatabase } from './db/schema.js';
 import { MusicDatabase } from './db/queries.js';
 import { registerApiRoutes } from './routes/api.js';
 import { registerStreamRoutes } from './routes/stream.js';
+import { registerWebSocketRoutes } from './routes/websocket.js';
 import { scanDirectory } from '../cli/scan.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +42,10 @@ export async function startServer(options: ServerOptions) {
   await app.register(fastifyCors, {
     origin: true,
   });
+
+  // WebSocket support for group mode
+  await app.register(fastifyWebsocket);
+  registerWebSocketRoutes(app);
 
   // Register API routes
   registerApiRoutes(app, db);

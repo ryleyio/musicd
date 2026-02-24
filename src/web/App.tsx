@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePlayer, type Track } from './hooks/usePlayer';
+import { useGroupMode } from './hooks/useGroupMode';
 import Player from './components/Player';
 import TrackList from './components/TrackList';
 import AlbumList from './components/AlbumList';
@@ -7,6 +8,7 @@ import ArtistList from './components/ArtistList';
 import Search from './components/Search';
 import Queue from './components/Queue';
 import NowPlaying from './components/NowPlaying';
+import GroupModeToggle from './components/GroupModeToggle';
 
 type View = 'tracks' | 'albums' | 'artists' | 'queue';
 
@@ -42,6 +44,91 @@ export default function App() {
   const [showNowPlaying, setShowNowPlaying] = useState(false);
 
   const player = usePlayer();
+
+  // Memoize player controls for group mode to avoid re-creating on every render
+  const playerControls = useMemo(() => ({
+    externalPlay: player.externalPlay,
+    externalSeek: player.externalSeek,
+    externalPause: player.externalPause,
+    externalResume: player.externalResume,
+    externalAddToQueue: player.externalAddToQueue,
+    getCurrentTime: player.getCurrentTime,
+  }), [
+    player.externalPlay,
+    player.externalSeek,
+    player.externalPause,
+    player.externalResume,
+    player.externalAddToQueue,
+    player.getCurrentTime,
+  ]);
+
+  const groupMode = useGroupMode({ playerControls });
+
+  // Wrapped player actions that broadcast to group when in group mode
+  const handlePlay = useCallback((track: Track) => {
+    if (groupMode.isInGroup) {
+      groupMode.broadcastPlay(track);
+    } else {
+      player.play(track);
+    }
+  }, [groupMode.isInGroup, groupMode.broadcastPlay, player.play]);
+
+  const handleTogglePlay = useCallback(() => {
+    if (groupMode.isInGroup) {
+      if (player.isPlaying) {
+        groupMode.broadcastPause();
+      } else {
+        groupMode.broadcastResume();
+      }
+    } else {
+      player.togglePlay();
+    }
+  }, [groupMode.isInGroup, player.isPlaying, groupMode.broadcastPause, groupMode.broadcastResume, player.togglePlay]);
+
+  const handleSeek = useCallback((time: number) => {
+    if (groupMode.isInGroup) {
+      groupMode.broadcastSeek(time);
+    } else {
+      player.seek(time);
+    }
+  }, [groupMode.isInGroup, groupMode.broadcastSeek, player.seek]);
+
+  const handlePlayNext = useCallback(() => {
+    if (groupMode.isInGroup) {
+      groupMode.broadcastNext();
+    } else {
+      player.playNext();
+    }
+  }, [groupMode.isInGroup, groupMode.broadcastNext, player.playNext]);
+
+  const handleAddToQueue = useCallback((track: Track) => {
+    if (groupMode.isInGroup) {
+      groupMode.broadcastAddToQueue(track);
+    } else {
+      player.addToQueue(track);
+    }
+  }, [groupMode.isInGroup, groupMode.broadcastAddToQueue, player.addToQueue]);
+
+  const handlePlayAlbum = useCallback((tracks: Track[]) => {
+    if (tracks.length === 0) return;
+    if (groupMode.isInGroup) {
+      // Play first track and queue the rest
+      groupMode.broadcastPlay(tracks[0]);
+      for (let i = 1; i < tracks.length; i++) {
+        groupMode.broadcastAddToQueue(tracks[i]);
+      }
+    } else {
+      player.playAlbum(tracks);
+    }
+  }, [groupMode.isInGroup, groupMode.broadcastPlay, groupMode.broadcastAddToQueue, player.playAlbum]);
+
+  const handleGroupToggle = useCallback(() => {
+    if (groupMode.isInGroup) {
+      groupMode.leaveGroup();
+    } else {
+      groupMode.joinGroup();
+    }
+  }, [groupMode.isInGroup, groupMode.leaveGroup, groupMode.joinGroup]);
 
   useEffect(() => {
     fetch('/api/stats').then(r => r.json()).then(setStats);
@@ -388,6 +475,12 @@ export default function App() {
           <button className="search-toggle" onClick={() => setShowSearch(true)}>
             🔍
           </button>
+          <GroupModeToggle
+            isInGroup={groupMode.isInGroup}
+            isConnecting={groupMode.isConnecting}
+            memberCount={groupMode.memberCount}
+            onToggle={handleGroupToggle}
+          />
           {stats && (
             <span className="app-stats">
               {stats.trackCount} tracks
@@ -433,8 +526,8 @@ export default function App() {
                   <div className="search-section-title">Tracks</div>
                   <TrackList
                     tracks={searchResults.tracks}
-                    onPlay={(t) => { player.play(t); setShowSearch(false); }}
-                    onAddToQueue={player.addToQueue}
+                    onPlay={(t) => { handlePlay(t); setShowSearch(false); }}
+                    onAddToQueue={handleAddToQueue}
                     currentTrack={player.currentTrack}
                     isPlaying={player.isPlaying}
                   />
@@ -493,8 +586,8 @@ export default function App() {
                     <div className="search-section-title">Tracks</div>
                     <TrackList
                       tracks={searchResults.tracks}
-                      onPlay={player.play}
-                      onAddToQueue={player.addToQueue}
+                      onPlay={handlePlay}
+                      onAddToQueue={handleAddToQueue}
                       currentTrack={player.currentTrack}
                       isPlaying={player.isPlaying}
                     />
@@ -516,13 +609,13 @@ export default function App() {
                 </button>
                 <h2 className="section-title">{selectedAlbum.album}</h2>
                 <p className="section-subtitle">{selectedAlbum.artist}</p>
-                <button className="play-album-btn" onClick={() => player.playAlbum(tracks)}>
+                <button className="play-album-btn" onClick={() => handlePlayAlbum(tracks)}>
                   ▶ Play Album
                 </button>
                 <TrackList
                   tracks={tracks}
-                  onPlay={player.play}
-                  onAddToQueue={player.addToQueue}
+                  onPlay={handlePlay}
+                  onAddToQueue={handleAddToQueue}
                   currentTrack={player.currentTrack}
                   isPlaying={player.isPlaying}
                 />
@@ -539,8 +632,8 @@ export default function App() {
             ) : (
               <TrackList
                 tracks={tracks}
-                onPlay={player.play}
-                onAddToQueue={player.addToQueue}
+                onPlay={handlePlay}
+                onAddToQueue={handleAddToQueue}
                 currentTrack={player.currentTrack}
                 isPlaying={player.isPlaying}
               />
@@ -568,12 +661,13 @@ export default function App() {
           currentTime={player.currentTime}
           duration={player.duration}
           volume={player.volume}
-          onTogglePlay={player.togglePlay}
-          onSeek={player.seek}
+          onTogglePlay={handleTogglePlay}
+          onSeek={handleSeek}
           onVolumeChange={player.setVolume}
-          onNext={player.playNext}
+          onNext={handlePlayNext}
           queueLength={player.queue.length}
           onExpand={() => setShowNowPlaying(true)}
+          isInGroup={groupMode.isInGroup}
         />
 
         {showNowPlaying && (
@@ -582,9 +676,9 @@ export default function App() {
             isPlaying={player.isPlaying}
             currentTime={player.currentTime}
             duration={player.duration}
-            onTogglePlay={player.togglePlay}
-            onSeek={player.seek}
-            onNext={player.playNext}
+            onTogglePlay={handleTogglePlay}
+            onSeek={handleSeek}
+            onNext={handlePlayNext}
             onPrev={player.playPrev}
             onClose={() => setShowNowPlaying(false)}
             queue={player.queue}

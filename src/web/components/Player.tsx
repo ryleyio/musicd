@@ -14,6 +14,7 @@ interface PlayerProps {
   onPrev?: () => void;
   queueLength: number;
   onExpand?: () => void;
+  isInGroup?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -35,6 +36,7 @@ export default function Player({
   onNext,
   queueLength,
   onExpand,
+  isInGroup = false,
 }: PlayerProps) {
   const progressRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
@@ -356,6 +358,19 @@ export default function Player({
           0%, 100% { opacity: 1; }
           50% { opacity: 0.7; }
         }
+        .group-indicator {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          color: #1db954;
+          font-size: 12px;
+          padding: 2px 8px;
+          background: rgba(29, 185, 84, 0.15);
+          border-radius: 10px;
+        }
+        .group-indicator-icon {
+          font-size: 14px;
+        }
 
         /* ===== MOBILE STYLES ===== */
         @media (max-width: 768px) {
@@ -465,6 +480,11 @@ export default function Player({
             &#9654;&#9654;
           </button>
           {queueLength > 0 && <span className="queue-badge">{queueLength}</span>}
+          {isInGroup && (
+            <span className="group-indicator" title="Synced with group">
+              <span className="group-indicator-icon">📡</span>
+            </span>
+          )}
         </div>
 
         <div className="progress-section">

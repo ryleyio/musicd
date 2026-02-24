@@ -182,6 +182,42 @@ export function usePlayer() {
     setState(s => ({ ...s, queue: [] }));
   }, []);
 
+  // External control methods for group mode sync
+  // These methods update state without triggering onAction callbacks
+  const externalPlay = useCallback((track: Track, position: number = 0) => {
+    if (!audioRef.current) return;
+    audioRef.current.src = `/api/stream/${track.id}`;
+    audioRef.current.currentTime = position;
+    audioRef.current.play();
+    setState(s => {
+      const newHistory = s.currentTrack ? [...s.history, s.currentTrack] : s.history;
+      const duration = track.duration && track.duration > 0 ? track.duration : 0;
+      return { ...s, currentTrack: track, history: newHistory, isPlaying: true, duration, currentTime: position };
+    });
+  }, []);
+
+  const externalSeek = useCallback((position: number) => {
+    if (audioRef.current && isFinite(position) && position >= 0) {
+      audioRef.current.currentTime = position;
+    }
+  }, []);
+
+  const externalPause = useCallback(() => {
+    audioRef.current?.pause();
+  }, []);
+
+  const externalResume = useCallback(() => {
+    audioRef.current?.play();
+  }, []);
+
+  const externalAddToQueue = useCallback((track: Track) => {
+    setState(s => ({ ...s, queue: [...s.queue, track] }));
+  }, []);
+
+  const getCurrentTime = useCallback(() => {
+    return audioRef.current?.currentTime || 0;
+  }, []);
+
   return {
     ...state,
     play,
@@ -195,5 +231,12 @@ export function usePlayer() {
     playNext,
     playPrev,
     clearQueue,
+    // External control methods for group mode
+    externalPlay,
+    externalSeek,
+    externalPause,
+    externalResume,
+    externalAddToQueue,
+    getCurrentTime,
   };
 }
